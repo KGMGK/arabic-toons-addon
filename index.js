@@ -22,10 +22,7 @@ app.use((req, res, next) => {
 const BASE_URL = 'https://www.arabic-toons.com';
 const USER_AGENT = 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 
-// قائمة الكرتونات المدعومة حاليًا
-// slug: الجزء الثابت من رابط الحلقة الأولى (بدون الرقم التسلسلي ورقم الحلقة)
-// firstId: رقم تسلسل الحلقة الأولى (يزيد بواحد لكل حلقة تالية)
-// episodes: عدد الحلقات الكلي
+// قائمة الكرتونات المدعومة
 const CARTOONS = {
   'tomandjerry': {
     name: 'توم وجيري',
@@ -33,6 +30,13 @@ const CARTOONS = {
     urlPrefix: 'tom-and-jerry-old-1441974636',
     firstEpisodeId: 6832,
     totalEpisodes: 151
+  },
+  'ranzealmudhisha': {
+    name: 'رانزي المدهشة',
+    poster: 'https://www.arabic-toons.com/images/anime/cat_1441907424.jpg',
+    urlPrefix: 'ranze-almudhisha',
+    firstEpisodeId: 1441907424,
+    totalEpisodes: 34 // تأكد من هذا الرقم، إذا كان المسلسل أطول أو أقصر يمكنك تعديله هنا
   }
 };
 
@@ -40,7 +44,6 @@ const CARTOONS = {
 // أدوات مساعدة
 // ------------------------------------------------------------------
 
-// يبني رابط صفحة حلقة معينة
 function buildEpisodePageUrl(cartoonKey, episodeNumber) {
   const cartoon = CARTOONS[cartoonKey];
   if (!cartoon) return null;
@@ -48,7 +51,6 @@ function buildEpisodePageUrl(cartoonKey, episodeNumber) {
   return `${BASE_URL}/${cartoon.urlPrefix}-${seqId}.html`;
 }
 
-// يجلب صفحة الحلقة ويستخرج رابط m3u8 (أو أي مصدر فيديو) منها
 async function extractStreamUrl(pageUrl) {
   const res = await axios.get(pageUrl, {
     headers: {
@@ -59,17 +61,13 @@ async function extractStreamUrl(pageUrl) {
   });
 
   const html = res.data;
-
-  // نبحث عن أي رابط m3u8 داخل الصفحة (مضمن مباشرة بجافاسكربت، أو داخل data attribute)
   const m3u8Regex = /https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/gi;
   const matches = html.match(m3u8Regex);
 
   if (matches && matches.length > 0) {
-    // ننظف أي escape زائد (\/ -> /)
     return matches[0].replace(/\\\//g, '/');
   }
 
-  // إذا ما لقينا m3u8 مباشر، نجرب نلقط رابط iframe كبديل
   const $ = cheerio.load(html);
   const iframeSrc = $('iframe').first().attr('src');
   if (iframeSrc) {
@@ -106,7 +104,7 @@ app.get('/manifest.json', (req, res) => {
 });
 
 // ------------------------------------------------------------------
-// Catalog: قائمة الكرتونات المتوفرة
+// Catalog
 // ------------------------------------------------------------------
 app.get('/catalog/series/arabic-toons-classics.json', (req, res) => {
   const metas = Object.keys(CARTOONS).map((key) => {
@@ -123,10 +121,10 @@ app.get('/catalog/series/arabic-toons-classics.json', (req, res) => {
 });
 
 // ------------------------------------------------------------------
-// Meta: تفاصيل الكرتون + قائمة الحلقات
+// Meta
 // ------------------------------------------------------------------
 app.get('/meta/series/:id.json', (req, res) => {
-  const id = req.params.id; // مثال: at:tomandjerry
+  const id = req.params.id; 
   const key = id.replace('at:', '');
   const cartoon = CARTOONS[key];
 
@@ -157,11 +155,11 @@ app.get('/meta/series/:id.json', (req, res) => {
 });
 
 // ------------------------------------------------------------------
-// Stream: يجيب رابط الفيديو الفعلي لحلقة معينة (عن طريق البروكسي)
+// Stream
 // ------------------------------------------------------------------
 app.get('/stream/series/:id.json', async (req, res) => {
-  const id = req.params.id; // مثال: at:tomandjerry:1:5
-  const parts = id.split(':'); // ['at', 'tomandjerry', '1', '5']
+  const id = req.params.id; 
+  const parts = id.split(':'); 
   const key = parts[1];
   const episodeNumber = parseInt(parts[3], 10);
 
@@ -178,7 +176,6 @@ app.get('/stream/series/:id.json', async (req, res) => {
       return res.json({ streams: [] });
     }
 
-    // نبني رابط يمر عبر سيرفرنا (بروكسي) بدل ما نعطي الرابط الأصلي مباشرة
     const publicBase = `${req.protocol}://${req.get('host')}`;
     const proxiedUrl = `${publicBase}/proxy/m3u8?url=${encodeURIComponent(streamUrl)}`;
 
@@ -198,20 +195,15 @@ app.get('/stream/series/:id.json', async (req, res) => {
 });
 
 // ------------------------------------------------------------------
-// Proxy: يمرر ملف m3u8 (playlist) ويعيد كتابة روابط المقاطع لتمر عبرنا
+// Proxy
 // ------------------------------------------------------------------
 app.get('/proxy/m3u8', async (req, res) => {
   const targetUrl = req.query.url;
-  if (!targetUrl) {
-    return res.status(400).send('missing url');
-  }
+  if (!targetUrl) return res.status(400).send('missing url');
 
   try {
     const upstream = await axios.get(targetUrl, {
-      headers: {
-        'User-Agent': USER_AGENT,
-        'Referer': BASE_URL + '/'
-      },
+      headers: { 'User-Agent': USER_AGENT, 'Referer': BASE_URL + '/' },
       timeout: 15000,
       responseType: 'text'
     });
@@ -221,10 +213,7 @@ app.get('/proxy/m3u8', async (req, res) => {
 
     const rewritten = lines.map((line) => {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) {
-        return line;
-      }
-      // نحول أي رابط نسبي إلى رابط مطلق أولاً
+      if (!trimmed || trimmed.startsWith('#')) return line;
       const absoluteUrl = new URL(trimmed, targetUrl).toString();
 
       if (absoluteUrl.includes('.m3u8')) {
@@ -241,24 +230,13 @@ app.get('/proxy/m3u8', async (req, res) => {
   }
 });
 
-// ------------------------------------------------------------------
-// Proxy: يمرر مقاطع الفيديو (.ts) بالبيانات الخام
-// ------------------------------------------------------------------
 app.get('/proxy/segment', async (req, res) => {
   const targetUrl = req.query.url;
-  if (!targetUrl) {
-    return res.status(400).send('missing url');
-  }
+  if (!targetUrl) return res.status(400).send('missing url');
 
   try {
-    const headers = {
-      'User-Agent': USER_AGENT,
-      'Referer': BASE_URL + '/'
-    };
-    // ندعم Range requests عشان التقديم بالفيديو يشتغل صح
-    if (req.headers.range) {
-      headers['Range'] = req.headers.range;
-    }
+    const headers = { 'User-Agent': USER_AGENT, 'Referer': BASE_URL + '/' };
+    if (req.headers.range) headers['Range'] = req.headers.range;
 
     const upstream = await axios.get(targetUrl, {
       headers,
@@ -268,17 +246,10 @@ app.get('/proxy/segment', async (req, res) => {
     });
 
     res.status(upstream.status);
-    if (upstream.headers['content-type']) {
-      res.setHeader('Content-Type', upstream.headers['content-type']);
-    }
-    if (upstream.headers['content-length']) {
-      res.setHeader('Content-Length', upstream.headers['content-length']);
-    }
-    if (upstream.headers['content-range']) {
-      res.setHeader('Content-Range', upstream.headers['content-range']);
-    }
+    if (upstream.headers['content-type']) res.setHeader('Content-Type', upstream.headers['content-type']);
+    if (upstream.headers['content-length']) res.setHeader('Content-Length', upstream.headers['content-length']);
+    if (upstream.headers['content-range']) res.setHeader('Content-Range', upstream.headers['content-range']);
     res.setHeader('Accept-Ranges', 'bytes');
-
     upstream.data.pipe(res);
   } catch (err) {
     console.error('segment proxy error:', err.message);
@@ -286,7 +257,6 @@ app.get('/proxy/segment', async (req, res) => {
   }
 });
 
-// ------------------------------------------------------------------
 app.listen(PORT, () => {
   console.log(`Arabic Toons addon running on port ${PORT}`);
 });
