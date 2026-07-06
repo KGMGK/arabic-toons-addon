@@ -5,6 +5,17 @@ const cheerio = require('cheerio');
 const app = express();
 const PORT = process.env.PORT || 7000;
 
+// السماح لأي موقع (زي web.stremio.com) بالوصول للإضافة
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 // ------------------------------------------------------------------
 // إعدادات عامة
 // ------------------------------------------------------------------
@@ -146,7 +157,7 @@ app.get('/meta/series/:id.json', (req, res) => {
 });
 
 // ------------------------------------------------------------------
-// Stream: يجيب رابط الفيديو الفعلي لحلقة معينة
+// Stream: يجيب رابط الفيديو الفعلي لحلقة معينة (عن طريق البروكسي)
 // ------------------------------------------------------------------
 app.get('/stream/series/:id.json', async (req, res) => {
   const id = req.params.id; // مثال: at:tomandjerry:1:5
@@ -167,18 +178,111 @@ app.get('/stream/series/:id.json', async (req, res) => {
       return res.json({ streams: [] });
     }
 
+    // نبني رابط يمر عبر سيرفرنا (بروكسي) بدل ما نعطي الرابط الأصلي مباشرة
+    const publicBase = `${req.protocol}://${req.get('host')}`;
+    const proxiedUrl = `${publicBase}/proxy/m3u8?url=${encodeURIComponent(streamUrl)}`;
+
     res.setHeader('Content-Type', 'application/json');
     res.json({
       streams: [
         {
           title: `${cartoon.name} - الحلقة ${episodeNumber}`,
-          url: streamUrl
+          url: proxiedUrl
         }
       ]
     });
   } catch (err) {
     console.error('Stream extraction error:', err.message);
     res.json({ streams: [] });
+  }
+});
+
+// ------------------------------------------------------------------
+// Proxy: يمرر ملف m3u8 (playlist) ويعيد كتابة روابط المقاطع لتمر عبرنا
+// ------------------------------------------------------------------
+app.get('/proxy/m3u8', async (req, res) => {
+  const targetUrl = req.query.url;
+  if (!targetUrl) {
+    return res.status(400).send('missing url');
+  }
+
+  try {
+    const upstream = await axios.get(targetUrl, {
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Referer': BASE_URL + '/'
+      },
+      timeout: 15000,
+      responseType: 'text'
+    });
+
+    const publicBase = `${req.protocol}://${req.get('host')}`;
+    const lines = upstream.data.split('\n');
+
+    const rewritten = lines.map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) {
+        return line;
+      }
+      // نحول أي رابط نسبي إلى رابط مطلق أولاً
+      const absoluteUrl = new URL(trimmed, targetUrl).toString();
+
+      if (absoluteUrl.includes('.m3u8')) {
+        return `${publicBase}/proxy/m3u8?url=${encodeURIComponent(absoluteUrl)}`;
+      }
+      return `${publicBase}/proxy/segment?url=${encodeURIComponent(absoluteUrl)}`;
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    res.send(rewritten.join('\n'));
+  } catch (err) {
+    console.error('m3u8 proxy error:', err.message);
+    res.status(502).send('proxy error');
+  }
+});
+
+// ------------------------------------------------------------------
+// Proxy: يمرر مقاطع الفيديو (.ts) بالبيانات الخام
+// ------------------------------------------------------------------
+app.get('/proxy/segment', async (req, res) => {
+  const targetUrl = req.query.url;
+  if (!targetUrl) {
+    return res.status(400).send('missing url');
+  }
+
+  try {
+    const headers = {
+      'User-Agent': USER_AGENT,
+      'Referer': BASE_URL + '/'
+    };
+    // ندعم Range requests عشان التقديم بالفيديو يشتغل صح
+    if (req.headers.range) {
+      headers['Range'] = req.headers.range;
+    }
+
+    const upstream = await axios.get(targetUrl, {
+      headers,
+      responseType: 'stream',
+      timeout: 20000,
+      validateStatus: () => true
+    });
+
+    res.status(upstream.status);
+    if (upstream.headers['content-type']) {
+      res.setHeader('Content-Type', upstream.headers['content-type']);
+    }
+    if (upstream.headers['content-length']) {
+      res.setHeader('Content-Length', upstream.headers['content-length']);
+    }
+    if (upstream.headers['content-range']) {
+      res.setHeader('Content-Range', upstream.headers['content-range']);
+    }
+    res.setHeader('Accept-Ranges', 'bytes');
+
+    upstream.data.pipe(res);
+  } catch (err) {
+    console.error('segment proxy error:', err.message);
+    res.status(502).send('proxy error');
   }
 });
 
