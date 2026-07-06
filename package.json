@@ -1,0 +1,17 @@
+{
+  "name": "arabic-toons-addon",
+  "version": "1.0.0",
+  "description": "Stremio addon for Arabic classic cartoons from arabic-toons.com",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "axios": "^1.7.2",
+    "cheerio": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
