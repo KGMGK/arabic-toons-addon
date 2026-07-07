@@ -1,5 +1,5 @@
 async function extractStreamUrl(pageUrl) {
-  console.log('--- جاري محاولة جلب الرابط من: ' + pageUrl + ' ---');
+  console.log('--- DEBUG: فحص شامل للصفحة ---');
   try {
     const res = await axios.get(pageUrl, {
       headers: {
@@ -12,38 +12,33 @@ async function extractStreamUrl(pageUrl) {
     const html = res.data;
     const $ = cheerio.load(html);
 
-    // 1. البحث في نصوص السكربتات (هنا يختبئ رابط الفيديو عادةً)
-    const scripts = $('script');
-    let foundUrl = null;
-    
-    scripts.each((i, el) => {
-      const scriptContent = $(el).html();
-      if (scriptContent && scriptContent.includes('.m3u8')) {
-        const match = scriptContent.match(/https?:\/\/[^"'\s]+\.m3u8/);
-        if (match) {
-          foundUrl = match[0];
+    // 1. البحث عن أي روابط في الـ iframes
+    const iframe = $('iframe').attr('src');
+    if (iframe) console.log('DEBUG: وجدت iframe: ' + iframe);
+
+    // 2. البحث عن أي روابط تحتوي على m3u8 أو mp4
+    const links = [];
+    $('a, source, video').each((i, el) => {
+        const link = $(el).attr('src') || $(el).attr('href');
+        if (link && (link.includes('m3u8') || link.includes('mp4'))) {
+            links.push(link);
         }
-      }
     });
 
-    if (foundUrl) {
-      console.log('تم العثور على الرابط داخل السكربتات: ' + foundUrl);
-      return foundUrl.replace(/\\\//g, '/');
-    }
+    // 3. البحث في السكربتات عن أي نص طويل يشبه الرابط
+    const scriptLinks = html.match(/(https?:\/\/[^\s"'<>]+\.(m3u8|mp4|mkv))/gi);
+    
+    console.log('DEBUG: روابط m3u8/mp4 عثرت عليها: ', links);
+    console.log('DEBUG: روابط عثرت عليها عبر السكربتات: ', scriptLinks);
 
-    // 2. البحث التقليدي في حالة فشل السكربتات
-    const m3u8Regex = /https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/gi;
-    const matches = html.match(m3u8Regex);
-    if (matches && matches.length > 0) {
-      console.log('تم العثور على الرابط عبر Regex: ' + matches[0]);
-      return matches[0].replace(/\\\//g, '/');
-    }
+    // سنأخذ أول رابط نجده
+    if (links.length > 0) return links[0];
+    if (scriptLinks && scriptLinks.length > 0) return scriptLinks[0];
 
-    console.log('فشل: الرابط ليس في HTML ولا داخل السكربتات.');
     return null;
 
   } catch (err) {
-    console.error('خطأ الاتصال: ' + err.message);
+    console.error('خطأ فادح: ' + err.message);
     return null;
   }
 }
