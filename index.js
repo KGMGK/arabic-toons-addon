@@ -15,7 +15,6 @@ app.use((req, res, next) => {
 });
 
 const BASE_URL = 'https://www.arabic-toons.com';
-const USER_AGENT = 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 
 // إعدادات الكرتونات
 const CARTOONS = {
@@ -46,23 +45,34 @@ function buildEpisodePageUrl(cartoonKey, episodeNumber) {
 }
 
 async function extractStreamUrl(pageUrl) {
-  console.log('--- جاري محاولة جلب الرابط من: ' + pageUrl + ' ---');
+  console.log('--- جاري محاولة جلب الصفحة من: ' + pageUrl + ' ---');
   try {
     const res = await axios.get(pageUrl, {
-      headers: { 'User-Agent': USER_AGENT, 'Referer': BASE_URL + '/' },
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Referer': 'https://www.google.com/',
+        'Accept-Language': 'ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7'
+      },
       timeout: 15000
     });
+
+    console.log('تم الوصول للموقع بنجاح (Status: ' + res.status + ')');
     const html = res.data;
+
+    // بحث عن رابط m3u8
     const m3u8Regex = /https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/gi;
     const matches = html.match(m3u8Regex);
+
     if (matches && matches.length > 0) {
-      console.log('تم العثور على الرابط: ' + matches[0]);
+      console.log('تم العثور على رابط فيديو: ' + matches[0]);
       return matches[0].replace(/\\\//g, '/');
     }
-    console.log('خطأ: لم يتم العثور على m3u8 في الصفحة');
+
+    console.log('تحذير: الصفحة وصلت ولكن لم نجد رابط الفيديو فيها.');
     return null;
   } catch (err) {
-    console.error('Extract error:', err.message);
+    console.error('خطأ فادح في الاتصال بالموقع: ' + err.message);
     return null;
   }
 }
@@ -118,7 +128,7 @@ app.get('/stream/series/:id.json', async (req, res) => {
 // Proxy
 app.get('/proxy/m3u8', async (req, res) => {
   try {
-    const upstream = await axios.get(req.query.url, { headers: { 'User-Agent': USER_AGENT, 'Referer': BASE_URL + '/' } });
+    const upstream = await axios.get(req.query.url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': BASE_URL + '/' } });
     const publicBase = `${req.protocol}://${req.get('host')}`;
     const rewritten = upstream.data.split('\n').map(line => {
       if (!line.trim() || line.startsWith('#')) return line;
@@ -132,7 +142,7 @@ app.get('/proxy/m3u8', async (req, res) => {
 
 app.get('/proxy/segment', async (req, res) => {
   try {
-    const upstream = await axios.get(req.query.url, { headers: { 'User-Agent': USER_AGENT, 'Referer': BASE_URL + '/' }, responseType: 'stream' });
+    const upstream = await axios.get(req.query.url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': BASE_URL + '/' }, responseType: 'stream' });
     upstream.data.pipe(res);
   } catch (err) { res.status(502).send('proxy error'); }
 });
