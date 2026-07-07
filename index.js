@@ -1,6 +1,4 @@
 const express = require('express');
-const axios = require('axios');
-const cheerio = require('cheerio');
 
 const app = express();
 const PORT = process.env.PORT || 7000;
@@ -16,7 +14,6 @@ app.use((req, res, next) => {
 });
 
 const BASE_URL = 'https://www.arabic-toons.com';
-const USER_AGENT = 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 
 const CARTOONS = {
   'tomandjerry': {
@@ -32,41 +29,14 @@ function buildEpisodePageUrl(cartoonKey, episodeNumber) {
   const cartoon = CARTOONS[cartoonKey];
   if (!cartoon) return null;
   const seqId = cartoon.firstEpisodeId + (episodeNumber - 1);
-  return `${BASE_URL}/${cartoon.urlPrefix}-${seqId}.html`;
-}
-
-async function extractStreamUrl(pageUrl) {
-  const res = await axios.get(pageUrl, {
-    headers: {
-      'User-Agent': USER_AGENT,
-      'Accept-Language': 'ar,en;q=0.9'
-    },
-    timeout: 15000
-  });
-
-  const html = res.data;
-
-  const m3u8Regex = /https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/gi;
-  const matches = html.match(m3u8Regex);
-
-  if (matches && matches.length > 0) {
-    return matches[0].replace(/\\\//g, '/');
-  }
-
-  const $ = cheerio.load(html);
-  const iframeSrc = $('iframe').first().attr('src');
-  if (iframeSrc) {
-    return iframeSrc;
-  }
-
-  return null;
+  return `${BASE_URL}/${cartoon.urlPrefix}-${seqId}-anime-streaming.html`;
 }
 
 const manifest = {
   id: 'com.khalifa.arabictoons',
-  version: '1.0.0',
+  version: '2.0.0',
   name: 'Arabic Toons - كرتون قديم',
-  description: 'إضافة تجلب الكرتون العربي القديم المدبلج من arabic-toons.com',
+  description: 'إضافة تعرض الكرتون العربي القديم المدبلج من arabic-toons.com وتفتح الحلقة بالمتصفح',
   logo: 'https://www.arabic-toons.com/img/logo.png',
   resources: ['catalog', 'meta', 'stream'],
   types: ['series'],
@@ -130,7 +100,7 @@ app.get('/meta/series/:id.json', (req, res) => {
   });
 });
 
-app.get('/stream/series/:id.json', async (req, res) => {
+app.get('/stream/series/:id.json', (req, res) => {
   const id = req.params.id;
   const parts = id.split(':');
   const key = parts[1];
@@ -141,15 +111,20 @@ app.get('/stream/series/:id.json', async (req, res) => {
     return res.status(404).json({ streams: [] });
   }
 
-  try {
-    const pageUrl = buildEpisodePageUrl(key, episodeNumber);
-    const streamUrl = await extractStreamUrl(pageUrl);
+  const pageUrl = buildEpisodePageUrl(key, episodeNumber);
 
-    if (!streamUrl) {
-      return res.json({ streams: [] });
-    }
+  res.setHeader('Content-Type', 'application/json');
+  res.json({
+    streams: [
+      {
+        name: 'فتح بالموقع',
+        title: `${cartoon.name} - الحلقة ${episodeNumber}\nتفتح بصفحة الموقع بالمتصفح`,
+        externalUrl: pageUrl
+      }
+    ]
+  });
+});
 
-    const publicBase = `${req.protocol}://${req.get('host')}`;
-    const proxiedUrl = `${publicBase}/proxy/m3u8?url=${encodeURIComponent(streamUrl)}`;
-
-    res.setHeader('Content-Type', 'application/
+app.listen(PORT, () => {
+  console.log(`Arabic Toons addon running on port ${PORT}`);
+});
