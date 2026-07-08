@@ -1,8 +1,10 @@
 const express = require('express');
+const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 7000;
 
+// السماح لأي موقع بالوصول (CORS)
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -13,41 +15,84 @@ app.use((req, res, next) => {
   next();
 });
 
-const BASE_URL = 'https://www.arabic-toons.com';
+const ARCHIVE_META = 'https://archive.org/metadata';
+const ARCHIVE_DL = 'https://archive.org/download';
 
-const CARTOONS = {
-  'tomandjerry': {
-    name: 'توم وجيري',
-    poster: 'https://www.arabic-toons.com/images/anime/cat_1441974636.jpg',
-    urlPrefix: 'tom-and-jerry-old-1441974636',
-    firstEpisodeId: 6832,
-    totalEpisodes: 151
+// قائمة المحتوى: نضيف هنا أي مسلسل جديد
+const SERIES = {
+  'conan': {
+    name: 'المحقق كونان (مدبلج)',
+    poster: 'https://archive.org/services/img/anime-detective-conan-season10-arabic-dub',
+    identifiers: [
+      'anime-detective-conan-season10-arabic-dub'
+    ]
   }
 };
 
-function buildEpisodePageUrl(cartoonKey, episodeNumber) {
-  const cartoon = CARTOONS[cartoonKey];
-  if (!cartoon) return null;
-  const seqId = cartoon.firstEpisodeId + (episodeNumber - 1);
-  return `${BASE_URL}/${cartoon.urlPrefix}-${seqId}-anime-streaming.html`;
+const episodeCache = {};
+
+// يجلب كل ملفات الفيديو من مجموعة على الأرشيف
+async function fetchFilesForIdentifier(identifier) {
+  const url = `${ARCHIVE_META}/${identifier}`;
+  const res = await axios.get(url, { timeout: 20000 });
+  const data = res.data;
+
+  if (!data || !data.files) {
+    return [];
+  }
+
+  const videoFiles = data.files.filter((f) => {
+    const name = (f.name || '').toLowerCase();
+    return name.endsWith('.mp4') || name.endsWith('.mkv') || name.endsWith('.avi');
+  });
+
+  videoFiles.sort((a, b) => a.name.localeCompare(b.name, 'ar', { numeric: true }));
+
+  return videoFiles.map((f) => ({
+    identifier,
+    fileName: f.name,
+    title: f.title || f.name.replace(/\.(mp4|mkv|avi)$/i, '')
+  }));
+}
+
+async function getEpisodesForSeries(seriesKey) {
+  if (episodeCache[seriesKey]) {
+    return episodeCache[seriesKey];
+  }
+
+  const series = SERIES[seriesKey];
+  if (!series) return [];
+
+  let allEpisodes = [];
+  for (const identifier of series.identifiers) {
+    try {
+      const files = await fetchFilesForIdentifier(identifier);
+      allEpisodes = allEpisodes.concat(files);
+    } catch (err) {
+      console.error(`خطأ بجلب ${identifier}: ${err.message}`);
+    }
+  }
+
+  episodeCache[seriesKey] = allEpisodes;
+  return allEpisodes;
 }
 
 const manifest = {
-  id: 'com.khalifa.arabictoons',
-  version: '2.0.0',
-  name: 'Arabic Toons - كرتون قديم',
-  description: 'إضافة تعرض الكرتون العربي القديم المدبلج من arabic-toons.com وتفتح الحلقة بالمتصفح',
-  logo: 'https://www.arabic-toons.com/img/logo.png',
+  id: 'com.khalifa.archivetoons',
+  version: '1.0.0',
+  name: 'Archive Toons - أرشيف خليفة',
+  description: 'إضافة خاصة تعرض كرتون وأنمي مدبلج من archive.org',
+  logo: 'https://archive.org/images/glogo.png',
   resources: ['catalog', 'meta', 'stream'],
   types: ['series'],
   catalogs: [
     {
       type: 'series',
-      id: 'arabic-toons-classics',
-      name: 'كرتون قديم مدبلج'
+      id: 'archive-toons-catalog',
+      name: 'أرشيف خليفة'
     }
   ],
-  idPrefixes: ['at:']
+  idPrefixes: ['arch:']
 };
 
 app.get('/manifest.json', (req, res) => {
@@ -55,76 +100,82 @@ app.get('/manifest.json', (req, res) => {
   res.json(manifest);
 });
 
-app.get('/catalog/series/arabic-toons-classics.json', (req, res) => {
-  const metas = Object.keys(CARTOONS).map((key) => {
-    const c = CARTOONS[key];
+app.get('/catalog/series/archive-toons-catalog.json', (req, res) => {
+  const metas = Object.keys(SERIES).map((key) => {
+    const s = SERIES[key];
     return {
-      id: `at:${key}`,
+      id: `arch:${key}`,
       type: 'series',
-      name: c.name,
-      poster: c.poster
+      name: s.name,
+      poster: s.poster
     };
   });
   res.setHeader('Content-Type', 'application/json');
   res.json({ metas });
 });
 
-app.get('/meta/series/:id.json', (req, res) => {
+app.get('/meta/series/:id.json', async (req, res) => {
   const id = req.params.id;
-  const key = id.replace('at:', '');
-  const cartoon = CARTOONS[key];
+  const key = id.replace('arch:', '');
+  const series = SERIES[key];
 
-  if (!cartoon) {
+  if (!series) {
     return res.status(404).json({ err: 'not found' });
   }
 
-  const videos = [];
-  for (let i = 1; i <= cartoon.totalEpisodes; i++) {
-    videos.push({
-      id: `at:${key}:1:${i}`,
-      title: `الحلقة ${i}`,
-      season: 1,
-      episode: i
-    });
-  }
+  const episodes = await getEpisodesForSeries(key);
+
+  const videos = episodes.map((ep, index) => ({
+    id: `arch:${key}:${index}`,
+    title: ep.title,
+    season: 1,
+    episode: index + 1
+  }));
 
   res.setHeader('Content-Type', 'application/json');
   res.json({
     meta: {
-      id: `at:${key}`,
+      id: `arch:${key}`,
       type: 'series',
-      name: cartoon.name,
-      poster: cartoon.poster,
+      name: series.name,
+      poster: series.poster,
       videos
     }
   });
 });
 
-app.get('/stream/series/:id.json', (req, res) => {
+app.get('/stream/series/:id.json', async (req, res) => {
   const id = req.params.id;
   const parts = id.split(':');
   const key = parts[1];
-  const episodeNumber = parseInt(parts[3], 10);
+  const epIndex = parseInt(parts[2], 10);
 
-  const cartoon = CARTOONS[key];
-  if (!cartoon || !episodeNumber) {
+  const series = SERIES[key];
+  if (!series || isNaN(epIndex)) {
     return res.status(404).json({ streams: [] });
   }
 
-  const pageUrl = buildEpisodePageUrl(key, episodeNumber);
+  const episodes = await getEpisodesForSeries(key);
+  const ep = episodes[epIndex];
+
+  if (!ep) {
+    return res.json({ streams: [] });
+  }
+
+  const directUrl = `${ARCHIVE_DL}/${ep.identifier}/${encodeURIComponent(ep.fileName)}`;
 
   res.setHeader('Content-Type', 'application/json');
   res.json({
     streams: [
       {
-        name: 'فتح بالموقع',
-        title: `${cartoon.name} - الحلقة ${episodeNumber}\nتفتح بصفحة الموقع بالمتصفح`,
-        externalUrl: pageUrl
+        name: 'Archive',
+        title: ep.title,
+        url: directUrl
       }
     ]
   });
 });
 
 app.listen(PORT, () => {
-  console.log(`Arabic Toons addon running on port ${PORT}`);
+  console.log(`Archive Toons addon running on port ${PORT}`);
 });
