@@ -1,7 +1,7 @@
-{
+
   "name": "archive-toons-addon",
-  "version": "1.0.0",
-  "description": "Stremio addon for Arabic dubbed cartoons from archive.org",
+  "version": "2.0.0",
+  "description": "Stremio addon: search and stream from archive.org",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
